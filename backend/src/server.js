@@ -726,7 +726,17 @@ app.post('/api/bot/setup/start', verifyToken, async (req, res) => {
 
     } catch (err) {
         console.error('[Bot Setup] Launch error:', err);
-        res.status(500).json({ error: 'Failed to launch setup browser' });
+        const errMsg = err.message || '';
+        let userFriendlyError = 'Failed to launch setup browser';
+        
+        if (errMsg.includes('DISPLAY is not set') || errMsg.includes('Failed to launch the browser process')) {
+            userFriendlyError = 'Google Account authentication is only supported in local development. Headless cloud servers cannot launch graphical setup windows. However, Google Meet supports guest joining automatically - NO account setup is required!';
+        }
+        
+        res.status(500).json({ 
+            success: false, 
+            error: userFriendlyError 
+        });
     }
 });
 

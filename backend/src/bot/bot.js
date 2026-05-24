@@ -365,14 +365,37 @@ async function runBot(meetingLink, meetingIdMongo, userId = null, botName = 'AI 
                 return { browser: null, page: null };
             }
 
-            // Check if login is required
-            if (pageText.includes("Sign in") || pageText.includes("Choose an account")) {
-                console.log('[GoogleMeet] ⚠️ Not logged in - browser profile may be invalid');
-                emitStatus(meetingIdMongo, 'failed', {
-                    message: 'Not logged in. Please re-authenticate your Google account.'
-                });
-                await browser.close();
-                return { browser: null, page: null };
+            // Check if guest join input is present
+            const isGuestJoinScreen = await page.evaluate(() => {
+                const input = document.querySelector('input[type="text"], input[placeholder*="name"], input[aria-label*="name"]');
+                return !!input;
+            });
+
+            if (isGuestJoinScreen) {
+                console.log(`[GoogleMeet] 👤 Guest join screen detected. Joining as guest with name: ${botName}`);
+                emitStatus(meetingIdMongo, 'joining', { message: `Entering name: ${botName}...` });
+                
+                // Type name
+                await page.evaluate((name) => {
+                    const input = document.querySelector('input[type="text"], input[placeholder*="name"], input[aria-label*="name"]');
+                    if (input) {
+                        input.value = name;
+                        input.dispatchEvent(new Event('input', { bubbles: true }));
+                        input.dispatchEvent(new Event('change', { bubbles: true }));
+                    }
+                }, botName);
+                
+                await delay(1000);
+            } else {
+                // Check if login is required
+                if (pageText.includes("Sign in") || pageText.includes("Choose an account")) {
+                    console.log('[GoogleMeet] ⚠️ Not logged in - browser profile may be invalid');
+                    emitStatus(meetingIdMongo, 'failed', {
+                        message: 'Not logged in. Please re-authenticate your Google account or ensure guest access is enabled.'
+                    });
+                    await browser.close();
+                    return { browser: null, page: null };
+                }
             }
 
             // Disable camera/mic before joining
@@ -418,7 +441,7 @@ async function runBot(meetingLink, meetingIdMongo, userId = null, botName = 'AI 
                 const buttons = Array.from(document.querySelectorAll('button, div[role="button"]'));
                 const joinBtn = buttons.find(btn => {
                     const text = (btn.textContent || '').toLowerCase();
-                    return text.includes('join now') || text.includes('ask to join');
+                    return text.includes('join now') || text.includes('ask to join') || text.includes('join meeting') || text.includes('join');
                 });
                 if (joinBtn) {
                     joinBtn.click();

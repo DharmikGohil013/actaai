@@ -368,9 +368,9 @@ const Settings = () => {
                 <IntegrationCard
                     id="bot"
                     title="Google Meet Bot"
-                    description="Configure the authenticated bot account to join restricted meetings."
+                    description="Google Meet supports guest joining - no setup required! Bot joins automatically."
                     icon={Bot}
-                    connected={botConfigured}
+                    connected={true}
                     onClick={() => setActiveModal('bot')}
                 />
 
@@ -559,66 +559,53 @@ const Settings = () => {
                     </Modal>
                 )}
 
-                {/* BOT SETUP MODAL */}
-                {activeModal === 'bot' && (
+                         {activeModal === 'bot' && (
                     <Modal title="Google Meet Bot Config" onClose={() => setActiveModal(null)}>
                         <div className="space-y-6">
                             <div className="p-4 bg-blue-500/10 border border-blue-500/20 rounded-xl">
                                 <h4 className="flex items-center gap-2 font-semibold text-blue-400 mb-2">
                                     <Globe size={16} />
-                                    Browser Authentication
+                                    Ready to Use!
                                 </h4>
                                 <p className="text-sm text-blue-200/80 leading-relaxed">
-                                    To join Google Meet calls, the bot needs an authenticated browser session.
-                                    We'll open a secure browser window for you to log in once.
+                                    Google Meet supports <strong className="text-white">guest joining</strong> - no Google account or setup required! The bot joins as a guest automatically.
                                 </p>
                             </div>
-
-                            {botConfigured ? (
-                                <div className="text-center py-6">
-                                    <div className="w-16 h-16 bg-green-500/20 text-green-400 rounded-full flex items-center justify-center mx-auto mb-4">
-                                        <CheckCircle size={32} />
-                                    </div>
-                                    <h3 className="text-xl font-bold mb-2">Bot Ready</h3>
-                                    <p className="text-slate-400 mb-6">Your bot is configured and ready to join meetings.</p>
-
-                                    <div className="flex flex-col gap-3">
-                                        <button
-                                            onClick={handleBotSetup}
-                                            disabled={botLoading}
-                                            className="w-full py-3 rounded-lg bg-white/5 hover:bg-white/10 transition-colors font-medium text-white flex items-center justify-center gap-2"
-                                        >
-                                            <RefreshCw size={18} className={botLoading ? "animate-spin" : ""} />
-                                            Re-authenticate (Re-connect)
-                                        </button>
+                            
+                            <div className="p-4 bg-white/5 border border-white/10 rounded-xl">
+                                <h4 className="flex items-center gap-2 font-semibold text-slate-300 mb-2">
+                                    <Lock size={16} />
+                                    Custom Google Account (Optional)
+                                </h4>
+                                <p className="text-xs text-slate-400 leading-relaxed mb-4">
+                                    If you want the bot to join restricted or internal enterprise meetings, you can log in to a custom Google account. 
+                                    Note: Custom account authentication is only supported in local development.
+                                </p>
+                                
+                                {botConfigured ? (
+                                    <div className="space-y-3">
+                                        <div className="p-3 bg-green-500/10 border border-green-500/25 rounded-lg text-xs text-green-400">
+                                            ✓ Custom Google Account Connected
+                                        </div>
                                         <button
                                             onClick={handleBotDisconnect}
                                             disabled={botLoading}
-                                            className="w-full py-3 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 transition-colors font-medium flex items-center justify-center gap-2"
+                                            className="w-full py-2.5 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 text-xs transition-colors font-medium flex items-center justify-center gap-2"
                                         >
-                                            <XCircle size={18} />
-                                            Remove Configuration
+                                            Remove Account Connection
                                         </button>
                                     </div>
-                                </div>
-                            ) : (
-                                <div className="text-center py-6">
-                                    <div className="w-16 h-16 bg-white/5 text-slate-400 rounded-full flex items-center justify-center mx-auto mb-4">
-                                        <UserIconPlaceholder />
-                                    </div>
-                                    <h3 className="text-xl font-bold mb-2">Not Configured</h3>
-                                    <p className="text-slate-400 mb-6">Connect a Google account to enable the bot.</p>
-
+                                ) : (
                                     <button
                                         onClick={handleBotSetup}
                                         disabled={botLoading}
-                                        className="w-full py-3 rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors font-medium flex items-center justify-center gap-2"
+                                        className="w-full py-2.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs transition-colors font-medium flex items-center justify-center gap-2"
                                     >
-                                        {botLoading ? <Loader2 className="animate-spin" size={18} /> : <ExternalLink size={18} />}
-                                        Launch Setup Browser
+                                        {botLoading ? <Loader2 className="animate-spin" size={14} /> : <ExternalLink size={14} />}
+                                        Connect Custom Account (Local Dev only)
                                     </button>
-                                </div>
-                            )}
+                                )}
+                            </div>
 
                             {botStatus.message && (
                                 <div className={`p-3 rounded-lg text-sm flex items-center gap-2 ${botStatus.type === 'success' ? 'bg-green-500/10 text-green-400' :
