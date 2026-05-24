@@ -203,10 +203,6 @@ async function runBot(meetingLink, meetingIdMongo, userId = null, botName = 'AI 
             '--disable-blink-features=AutomationControlled',
             '--autoplay-policy=no-user-gesture-required',
             '--use-fake-ui-for-media-stream',
-            '--alsa-output-device=pulse',
-            '--use-fake-device-for-media-stream',
-            '--disable-features=WebRtcHideLocalIpsWithMdns',
-            '--allow-running-insecure-content',
             '--start-maximized',
             '--window-size=1280,720',
             '--window-position=0,0',
@@ -218,6 +214,15 @@ async function runBot(meetingLink, meetingIdMongo, userId = null, botName = 'AI 
             '--allow-http-screen-capture',
             '--auto-select-desktop-capture-source=Zoom',
             '--enable-features=GetDisplayMediaSet,GetDisplayMediaSetAutoSelectAllScreens',
+            // ADD THESE NEW FLAGS:
+            '--disable-web-security',
+            '--allow-running-insecure-content',
+            '--disable-features=IsolateOrigins,site-per-process',
+            '--enable-webrtc-hide-local-ips-with-mdns=false',
+            '--force-webrtc-ip-handling-policy=default_public_interface_only',
+            '--disable-rtc-smoothness-algorithm',
+            '--enable-blink-features=ShadowDOMV0,CustomElementsV0,HTMLImports',
+            `--display=:99`,
         ],
     };
 
@@ -743,6 +748,8 @@ async function runBot(meetingLink, meetingIdMongo, userId = null, botName = 'AI 
                 
                 // Dismiss any terms, consent or recording dialogs (now ignores close/dismiss buttons)
                 await dismissZoomModals(page);
+                const pageSnippet = await page.evaluate(() => document.body?.innerText?.substring(0, 200) || '');
+                console.log('[Bot] Page content:', pageSnippet.replace(/\n/g, ' '));
                 
                 // Take debug screenshots occasionally
                 if (step % 3 === 1) {
@@ -771,33 +778,40 @@ async function runBot(meetingLink, meetingIdMongo, userId = null, botName = 'AI 
             // Join audio
             console.log('[Bot] Joining audio...');
             try {
-                await delay(2000); // Give dialog an extra moment to settle
-                const audioJoined = await page.evaluate(() => {
-                    const buttons = Array.from(document.querySelectorAll('button, div[role="button"]'));
-                    const btn = buttons.find(b => {
-                        const t = (b.textContent || '').toLowerCase();
-                        const id = (b.id || '').toLowerCase();
-                        const cls = (b.className || '').toLowerCase();
-                        const aria = (b.getAttribute('aria-label') || '').toLowerCase();
-                        
-                        return t.includes('computer audio') || 
-                               t.includes('join audio') || 
-                               t.includes('join by computer') ||
-                               id.includes('computer-audio') ||
-                               cls.includes('computer-audio') ||
-                               aria.includes('computer audio');
+                await delay(3000);
+                
+                // Try multiple times to find and click audio join
+                let audioJoined = false;
+                for (let attempt = 0; attempt < 5; attempt++) {
+                    audioJoined = await page.evaluate(() => {
+                        const buttons = Array.from(document.querySelectorAll('button, div[role="button"], a'));
+                        const btn = buttons.find(b => {
+                            const t = (b.textContent || '').toLowerCase();
+                            const aria = (b.getAttribute('aria-label') || '').toLowerCase();
+                            const cls = (b.className || '').toLowerCase();
+                            return t.includes('computer audio') ||
+                                   t.includes('join audio') ||
+                                   t.includes('join with computer') ||
+                                   aria.includes('computer audio') ||
+                                   aria.includes('join audio') ||
+                                   cls.includes('join-audio') ||
+                                   cls.includes('computer-audio');
+                        });
+                        if (btn) { btn.click(); return true; }
+                        return false;
                     });
-                    if (btn) {
-                        btn.click();
-                        return true;
+                    
+                    if (audioJoined) {
+                        console.log('[Bot] ✅ Audio join button clicked');
+                        break;
                     }
-                    return false;
-                });
-
-                if (audioJoined) {
-                    console.log('[Bot] Audio join button clicked successfully');
-                } else {
-                    console.log('[Bot] Audio join button not found, may already be in meeting or using auto-join');
+                    await delay(1000);
+                }
+                
+                if (!audioJoined) {
+                    console.log('[Bot] Audio button not found - trying keyboard shortcut');
+                    // Try pressing Enter which sometimes confirms audio dialog
+                    await page.keyboard.press('Enter');
                 }
             } catch (e) {
                 console.log('[Bot] Error joining audio:', e.message);
