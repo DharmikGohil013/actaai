@@ -672,6 +672,15 @@ app.post('/api/bot/setup/start', verifyToken, async (req, res) => {
             require('fs').mkdirSync(profilePath, { recursive: true });
         }
 
+        // Check if running on a headless Linux server
+        const isHeadlessServer = process.platform === 'linux' && !process.env.DISPLAY;
+        if (isHeadlessServer) {
+            console.log('[Bot Setup] Headless environment detected - skipping browser launch');
+            return res.status(400).json({
+                error: 'Google Account authentication is only supported in local development. Headless cloud servers cannot launch graphical setup windows. However, Google Meet supports guest joining automatically - NO account setup is required!'
+            });
+        }
+
         console.log('[Bot Setup] Launching browser for setup:', userId);
 
         // Launch browser with user data dir to save session
@@ -831,6 +840,15 @@ app.post('/api/bot/teams/setup/start', verifyToken, async (req, res) => {
         // Create profile directory if it doesn't exist
         if (!require('fs').existsSync(profilePath)) {
             require('fs').mkdirSync(profilePath, { recursive: true });
+        }
+
+        // Check if running on a headless Linux server
+        const isHeadlessServer = process.platform === 'linux' && !process.env.DISPLAY;
+        if (isHeadlessServer) {
+            console.log('[Teams Bot Setup] Headless environment detected - skipping browser launch');
+            return res.status(400).json({
+                error: 'Microsoft Account authentication is only supported in local development. Headless cloud servers cannot launch graphical setup windows. However, MS Teams supports guest joining automatically - NO account setup is required!'
+            });
         }
 
         console.log('[Teams Bot Setup] Launching browser for setup:', userId);
