@@ -101,65 +101,64 @@ async function isInMeetingRoom(page) {
     if (!page || page.isClosed()) return false;
     try {
         const result = await page.evaluate(() => {
-            // Find all buttons on the page
-            const buttons = Array.from(document.querySelectorAll('button, div[role="button"]'));
-            
-            // Check for actual in-meeting controls (these NEVER exist on the preview page)
-            const meetingControlButtons = buttons.filter(btn => {
-                const aria = (btn.getAttribute('aria-label') || '').toLowerCase();
-                const text = (btn.textContent || '').toLowerCase();
-                const cls = (btn.className || '').toLowerCase();
-                
-                // Exclude preview elements
-                if (cls.includes('preview')) return false;
-                
-                return aria.includes('participants') || aria.includes('chat') || 
-                       aria.includes('share screen') || aria.includes('leave') ||
-                       text.includes('participants') || text.includes('chat') || 
-                       text.includes('share screen') || text.includes('leave');
-            });
-            
-            // Check for Join Audio / Computer Audio buttons in the actual meeting room
-            const audioModalButtons = buttons.filter(btn => {
-                const text = (btn.textContent || '').toLowerCase();
-                const aria = (btn.getAttribute('aria-label') || '').toLowerCase();
-                const cls = (btn.className || '').toLowerCase();
-                const id = (btn.id || '').toLowerCase();
-                
-                // Exclude preview elements
-                if (cls.includes('preview') || id.includes('preview')) return false;
-                
-                return text.includes('computer audio') || text.includes('join audio') || 
-                       text.includes('join by computer') ||
-                       aria.includes('computer audio') || aria.includes('join audio') ||
-                       cls.includes('computer-audio') || cls.includes('join-audio') ||
-                       id.includes('computer-audio') || id.includes('join-audio');
-            });
-            
-            // Check if we are in the waiting room
             const bodyText = (document.body?.innerText || '').toLowerCase();
-            const inWaitingRoom = (bodyText.includes('please wait') && bodyText.includes('let you in soon')) ||
-                                 bodyText.includes('waiting for the host to start') ||
-                                 bodyText.includes('waiting room') ||
-                                 bodyText.includes('host will let you in');
-            
-            const hasControls = meetingControlButtons.length > 0;
-            const hasAudioModal = audioModalButtons.length > 0;
-            
-            const decision = (hasControls || hasAudioModal) && !inWaitingRoom;
-            
-            return {
-                decision,
-                hasControls,
-                hasAudioModal,
-                inWaitingRoom,
-                controlsCount: meetingControlButtons.length,
-                audioCount: audioModalButtons.length,
-                bodySnippet: bodyText.substring(0, 150)
-            };
+            const bodyHTML = (document.body?.innerHTML || '').toLowerCase();
+
+            // Definitely in waiting room
+            const inWaitingRoom = bodyText.includes('please wait') ||
+                bodyText.includes('let you in') ||
+                bodyText.includes('waiting for the host') ||
+                bodyText.includes('waiting room');
+
+            if (inWaitingRoom) return { decision: false, reason: 'waiting-room' };
+
+            // Check URL — if we got past the /join page we're in
+            const url = window.location.href.toLowerCase();
+            const pastJoin = url.includes('/wc/') && !url.includes('/join');
+            if (pastJoin) return { decision: true, reason: 'url-past-join' };
+
+            // Check for any meeting UI elements
+            const meetingIndicators = [
+                '[class*="meeting-client"]',
+                '[class*="meeting-info"]',
+                '[class*="footer-button"]',
+                '[class*="audio-option"]',
+                '[class*="video-option"]',
+                '[class*="participants"]',
+                '[class*="chat-container"]',
+                '[class*="leave-meeting"]',
+                '[class*="join-audio"]',
+                '[class*="computer-audio"]',
+                '.zm-btn',
+                '[aria-label*="Leave"]',
+                '[aria-label*="Mute"]',
+                '[aria-label*="Chat"]',
+                '[aria-label*="Participants"]',
+                '[aria-label*="Share Screen"]',
+                '[aria-label*="Computer Audio"]',
+                '[aria-label*="Join Audio"]',
+            ];
+
+            for (const sel of meetingIndicators) {
+                try {
+                    if (document.querySelector(sel)) {
+                        return { decision: true, reason: 'found-' + sel };
+                    }
+                } catch(e) {}
+            }
+
+            // Check by body class
+            if (bodyHTML.includes('meeting-client') || 
+                bodyHTML.includes('join-audio') ||
+                bodyHTML.includes('computer-audio') ||
+                bodyHTML.includes('zm-btn')) {
+                return { decision: true, reason: 'html-contains-meeting' };
+            }
+
+            return { decision: false, reason: 'no-indicators' };
         });
-        
-        console.log(`[Bot] Meeting detection status: decision=${result.decision}, hasControls=${result.hasControls} (${result.controlsCount}), hasAudioModal=${result.hasAudioModal} (${result.audioCount}), inWaitingRoom=${result.inWaitingRoom}`);
+
+        console.log(`[Bot] Meeting detection: decision=${result.decision}, reason=${result.reason}`);
         return result.decision;
     } catch (e) {
         console.log('[Bot] Error in isInMeetingRoom check:', e.message);
