@@ -53,7 +53,7 @@ async function runBot(meetingLink, meetingIdMongo, userId = null, botName = 'AI 
     // Detect platform and get browser profile if needed
     const platform = detectPlatform(meetingLink);
     let browserOptions = {
-        headless: false,
+        headless: process.env.PUPPETEER_HEADLESS === 'true' ? true : (process.env.PUPPETEER_HEADLESS === 'false' ? false : false),
         defaultViewport: null,
         args: [
             '--no-sandbox',
