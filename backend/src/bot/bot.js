@@ -61,10 +61,11 @@ async function dismissZoomModals(page) {
                     const combined = (text + ' ' + ariaLabel + ' ' + id).toLowerCase().trim();
                     
                     // Terms of service, cookie policies, AI Companion notices, recording got-its
+                    // Note: Exclude negative actions like 'close' or 'dismiss' to avoid exiting join flows or closing audio dialogs
                     const matchWords = [
                         'agree', 'accept', 'continue', 'confirm', 
                         'i agree', 'i accept', 'got it', 'okay', 'ok',
-                        'close', 'proceed', 'dismiss'
+                        'proceed'
                     ];
                     
                     if (matchWords.some(word => combined === word || combined.includes(word))) {
@@ -87,6 +88,44 @@ async function dismissZoomModals(page) {
         }
     } catch (err) {
         console.log('[Bot] Warning inside dismissZoomModals:', err.message);
+    }
+}
+
+// Reliable helper to check if the bot is actually in the meeting room (out of the waiting room)
+async function isInMeetingRoom(page) {
+    if (!page || page.isClosed()) return false;
+    try {
+        return await page.evaluate(() => {
+            // Check for Zoom meeting footer / control bar
+            const footerExists = !!document.querySelector('.meeting-control-bar, #wc-footer, .footer, [class*="footer"]');
+            
+            // Check for Join Audio or Computer Audio buttons
+            const buttons = Array.from(document.querySelectorAll('button, div[role="button"]'));
+            const hasAudioButton = buttons.some(btn => {
+                const txt = (btn.textContent || '').toLowerCase();
+                const aria = (btn.getAttribute('aria-label') || '').toLowerCase();
+                const cls = (btn.className || '').toLowerCase();
+                const id = (btn.id || '').toLowerCase();
+                
+                return txt.includes('computer audio') || txt.includes('join audio') || 
+                       txt.includes('join by computer') ||
+                       aria.includes('computer audio') || aria.includes('join audio') ||
+                       aria.includes('mute') || aria.includes('unmute') ||
+                       cls.includes('computer-audio') || cls.includes('join-audio') ||
+                       id.includes('computer-audio') || id.includes('join-audio');
+            });
+            
+            // Check if page text doesn't indicate waiting room
+            const bodyText = (document.body?.innerText || '').toLowerCase();
+            const inWaitingRoom = (bodyText.includes('please wait') && bodyText.includes('let you in soon')) ||
+                                 bodyText.includes('waiting for the host to start') ||
+                                 bodyText.includes('waiting room') ||
+                                 bodyText.includes('host will let you in');
+                                 
+            return (footerExists || hasAudioButton) && !inWaitingRoom;
+        });
+    } catch (e) {
+        return false;
     }
 }
 
