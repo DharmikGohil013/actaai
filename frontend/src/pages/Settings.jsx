@@ -181,7 +181,10 @@ const Settings = () => {
                 }, 300000);
             }
         } catch (err) {
-            setBotStatus({ type: 'error', message: 'Failed to launch browser' });
+            setBotStatus({ 
+                type: 'error', 
+                message: err.response?.data?.error || 'Failed to launch browser' 
+            });
             setBotLoading(false);
         }
     };
@@ -241,7 +244,10 @@ const Settings = () => {
                 }, 300000);
             }
         } catch (err) {
-            setTeamsBotStatus({ type: 'error', message: 'Failed to launch browser' });
+            setTeamsBotStatus({ 
+                type: 'error', 
+                message: err.response?.data?.error || 'Failed to launch browser' 
+            });
             setTeamsBotLoading(false);
         }
     };
