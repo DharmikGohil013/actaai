@@ -197,9 +197,11 @@ async function runBot(meetingLink, meetingIdMongo, userId = null, botName = 'AI 
     let browserOptions = {
         headless: process.env.PUPPETEER_HEADLESS === 'true' ? true : (process.env.PUPPETEER_HEADLESS === 'false' ? false : false),
         defaultViewport: null,
+        ignoreDefaultArgs: ['--enable-automation'],
         args: [
             '--no-sandbox',
             '--disable-setuid-sandbox',
+            '--disable-blink-features=AutomationControlled',
             '--autoplay-policy=no-user-gesture-required',
             '--use-fake-ui-for-media-stream',
             '--start-maximized',
@@ -260,6 +262,26 @@ async function runBot(meetingLink, meetingIdMongo, userId = null, botName = 'AI 
 
     const pages = await browser.pages();
     const page = pages[0] || await browser.newPage();
+
+    // Set a normal browser User-Agent
+    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+
+    // Inject stealth overrides before any document loads to bypass bot detection (such as Zoom's webdriver detection)
+    await page.evaluateOnNewDocument(() => {
+        Object.defineProperty(navigator, 'webdriver', {
+            get: () => false,
+        });
+        
+        // Mock plugins to look like a real browser
+        Object.defineProperty(navigator, 'plugins', {
+            get: () => [1, 2, 3, 4, 5],
+        });
+        
+        // Mock languages
+        Object.defineProperty(navigator, 'languages', {
+            get: () => ['en-US', 'en'],
+        });
+    });
 
     // Bring browser window to front
     await page.bringToFront();
