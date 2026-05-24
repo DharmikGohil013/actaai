@@ -45,42 +45,47 @@ async function saveDebugScreenshot(page, meetingIdMongo, stage) {
 }
 
 // Modal and Terms auto-acceptance helper - searches all contexts and frames for consent clickables
+// Modal and Terms auto-acceptance helper - searches all contexts and frames for consent clickables
 async function dismissZoomModals(page) {
     if (!page || page.isClosed()) return;
     try {
         const frames = [page, ...page.frames()];
         for (const frame of frames) {
             try {
-                // Find all potential clickables on the page/frame
-                const clickables = await frame.$$('button, [role="button"], a.btn, .btn, #onetrust-accept-btn-handler');
-                for (const el of clickables) {
-                    const text = await frame.evaluate(node => node.textContent || '', el);
-                    const ariaLabel = await frame.evaluate(node => node.getAttribute('aria-label') || '', el);
-                    const id = await frame.evaluate(node => node.id || '', el);
+                // Perform the entire search and click logic inside the frame to maximize performance and avoid round-trips
+                const clickedSomething = await frame.evaluate(() => {
+                    const clickables = Array.from(document.querySelectorAll('button, [role="button"], a.btn, .btn, #onetrust-accept-btn-handler'));
                     
-                    const combined = (text + ' ' + ariaLabel + ' ' + id).toLowerCase().trim();
-                    
-                    // Terms of service, cookie policies, AI Companion notices, recording got-its
-                    // Note: Exclude negative actions like 'close' or 'dismiss' to avoid exiting join flows or closing audio dialogs
                     const matchWords = [
                         'agree', 'accept', 'continue', 'confirm', 
                         'i agree', 'i accept', 'got it', 'okay', 'ok',
                         'proceed'
                     ];
                     
-                    if (matchWords.some(word => combined === word || combined.includes(word))) {
-                        // Validate element visibility and dimensions to avoid clicking hidden overlays
-                        const isVisible = await frame.evaluate(node => {
-                            const rect = node.getBoundingClientRect();
-                            return rect.width > 0 && rect.height > 0 && window.getComputedStyle(node).display !== 'none';
-                        }, el);
+                    for (const el of clickables) {
+                        const text = el.textContent || '';
+                        const ariaLabel = el.getAttribute('aria-label') || '';
+                        const id = el.id || '';
                         
-                        if (isVisible) {
-                            console.log(`[Bot] 👆 Auto-clicking dialog element: text="${text.trim()}", ariaLabel="${ariaLabel}", id="${id}"`);
-                            await el.click();
-                            await delay(1000);
+                        const combined = (text + ' ' + ariaLabel + ' ' + id).toLowerCase().trim();
+                        
+                        if (matchWords.some(word => combined === word || combined.includes(word))) {
+                            // Check visibility
+                            const rect = el.getBoundingClientRect();
+                            const isVisible = rect.width > 0 && rect.height > 0 && window.getComputedStyle(el).display !== 'none';
+                            
+                            if (isVisible) {
+                                el.click();
+                                return { text: text.trim(), ariaLabel, id };
+                            }
                         }
                     }
+                    return null;
+                });
+                
+                if (clickedSomething) {
+                    console.log(`[Bot] 👆 Auto-clicking dialog element: text="${clickedSomething.text}", ariaLabel="${clickedSomething.ariaLabel}", id="${clickedSomething.id}"`);
+                    await delay(1000);
                 }
             } catch (frameErr) {
                 // Ignore detached/frame context errors
@@ -95,36 +100,69 @@ async function dismissZoomModals(page) {
 async function isInMeetingRoom(page) {
     if (!page || page.isClosed()) return false;
     try {
-        return await page.evaluate(() => {
-            // Check for Zoom meeting footer / control bar
-            const footerExists = !!document.querySelector('.meeting-control-bar, #wc-footer, .footer, [class*="footer"]');
-            
-            // Check for Join Audio or Computer Audio buttons
+        const result = await page.evaluate(() => {
+            // Find all buttons on the page
             const buttons = Array.from(document.querySelectorAll('button, div[role="button"]'));
-            const hasAudioButton = buttons.some(btn => {
-                const txt = (btn.textContent || '').toLowerCase();
+            
+            // Check for actual in-meeting controls (these NEVER exist on the preview page)
+            const meetingControlButtons = buttons.filter(btn => {
+                const aria = (btn.getAttribute('aria-label') || '').toLowerCase();
+                const text = (btn.textContent || '').toLowerCase();
+                const cls = (btn.className || '').toLowerCase();
+                
+                // Exclude preview elements
+                if (cls.includes('preview')) return false;
+                
+                return aria.includes('participants') || aria.includes('chat') || 
+                       aria.includes('share screen') || aria.includes('leave') ||
+                       text.includes('participants') || text.includes('chat') || 
+                       text.includes('share screen') || text.includes('leave');
+            });
+            
+            // Check for Join Audio / Computer Audio buttons in the actual meeting room
+            const audioModalButtons = buttons.filter(btn => {
+                const text = (btn.textContent || '').toLowerCase();
                 const aria = (btn.getAttribute('aria-label') || '').toLowerCase();
                 const cls = (btn.className || '').toLowerCase();
                 const id = (btn.id || '').toLowerCase();
                 
-                return txt.includes('computer audio') || txt.includes('join audio') || 
-                       txt.includes('join by computer') ||
+                // Exclude preview elements
+                if (cls.includes('preview') || id.includes('preview')) return false;
+                
+                return text.includes('computer audio') || text.includes('join audio') || 
+                       text.includes('join by computer') ||
                        aria.includes('computer audio') || aria.includes('join audio') ||
-                       aria.includes('mute') || aria.includes('unmute') ||
                        cls.includes('computer-audio') || cls.includes('join-audio') ||
                        id.includes('computer-audio') || id.includes('join-audio');
             });
             
-            // Check if page text doesn't indicate waiting room
+            // Check if we are in the waiting room
             const bodyText = (document.body?.innerText || '').toLowerCase();
             const inWaitingRoom = (bodyText.includes('please wait') && bodyText.includes('let you in soon')) ||
                                  bodyText.includes('waiting for the host to start') ||
                                  bodyText.includes('waiting room') ||
                                  bodyText.includes('host will let you in');
-                                 
-            return (footerExists || hasAudioButton) && !inWaitingRoom;
+            
+            const hasControls = meetingControlButtons.length > 0;
+            const hasAudioModal = audioModalButtons.length > 0;
+            
+            const decision = (hasControls || hasAudioModal) && !inWaitingRoom;
+            
+            return {
+                decision,
+                hasControls,
+                hasAudioModal,
+                inWaitingRoom,
+                controlsCount: meetingControlButtons.length,
+                audioCount: audioModalButtons.length,
+                bodySnippet: bodyText.substring(0, 150)
+            };
         });
+        
+        console.log(`[Bot] Meeting detection status: decision=${result.decision}, hasControls=${result.hasControls} (${result.controlsCount}), hasAudioModal=${result.hasAudioModal} (${result.audioCount}), inWaitingRoom=${result.inWaitingRoom}`);
+        return result.decision;
     } catch (e) {
+        console.log('[Bot] Error in isInMeetingRoom check:', e.message);
         return false;
     }
 }
