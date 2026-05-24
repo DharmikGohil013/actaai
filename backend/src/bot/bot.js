@@ -213,16 +213,18 @@ async function runBot(meetingLink, meetingIdMongo, userId = null, botName = 'AI 
             '--enable-usermedia-screen-capturing',
             '--allow-http-screen-capture',
             '--auto-select-desktop-capture-source=Zoom',
-            '--enable-features=GetDisplayMediaSet,GetDisplayMediaSetAutoSelectAllScreens',
+            '--enable-features=GetDisplayMediaSet,GetDisplayMediaSetAutoSelectAllScreens,WebRtcExposeRtpPacketType',
             // ADD THESE NEW FLAGS:
             '--disable-web-security',
             '--allow-running-insecure-content',
-            '--disable-features=IsolateOrigins,site-per-process',
+            '--disable-features=IsolateOrigins,site-per-process,WebRtcHideLocalIpsWithMdns',
             '--enable-webrtc-hide-local-ips-with-mdns=false',
             '--force-webrtc-ip-handling-policy=default_public_interface_only',
             '--disable-rtc-smoothness-algorithm',
             '--enable-blink-features=ShadowDOMV0,CustomElementsV0,HTMLImports',
             `--display=:99`,
+            '--alsa-output-device=pulse',
+            '--alsa-input-device=pulse',
         ],
     };
 
@@ -851,7 +853,10 @@ async function runBot(meetingLink, meetingIdMongo, userId = null, botName = 'AI 
             console.log('[Bot] ✅ Joined meeting!');
             emitStatus(meetingIdMongo, 'in-meeting', { message: 'Bot is in the meeting!' });
 
-            // --- START AUDIO CAPTURE ---
+            // Wait for Zoom WebRTC to establish
+            console.log('[Bot] Waiting for WebRTC audio to initialize...');
+            await delay(8000); // Give Zoom time to set up audio streams
+
             await setupAudioCapture(page, meetingIdMongo, audioChunks);
 
             await updateMeetingStatus(meetingIdMongo, 'recording');
@@ -1245,81 +1250,145 @@ async function setupAudioCapture(page, meetingIdMongo, audioChunks) {
     const started = await page.evaluate(() => {
         return new Promise((resolve) => {
             try {
-                console.log('[Recording] Starting capture...');
                 window.onAudioDebug('Initializing audio capture...');
 
-                const audioContext = window.__mainAudioContext || new (window.AudioContext || window.webkitAudioContext)();
+                const audioContext = new (window.AudioContext || window.webkitAudioContext)();
                 const destination = audioContext.createMediaStreamDestination();
                 let sourcesConnected = 0;
 
-                // Capture all sources
-                if (window.__speakerNodes) window.__speakerNodes.forEach(n => { try { n.connect(destination); sourcesConnected++; } catch (e) { } });
-                if (window.__audioNodes) window.__audioNodes.forEach(i => { try { if (i.node && !i.node._captured) { i.node.connect(destination); sourcesConnected++; } } catch (e) { } });
-
-                // Capture WebRTC streams (Teams uses these for remote audio)
-                if (window.__rtcStreams && window.__rtcStreams.length > 0) {
-                    window.onAudioDebug(`Found ${window.__rtcStreams.length} WebRTC streams`);
-                    window.__rtcStreams.forEach((stream, idx) => {
-                        try {
-                            const source = audioContext.createMediaStreamSource(stream);
-                            source.connect(destination);
-                            sourcesConnected++;
-                            console.log('[Recording] Connected WebRTC stream', idx);
-                        } catch (e) {
-                            console.log('[Recording] Failed to connect WebRTC stream', idx, e.message);
-                        }
-                    });
-                }
-
+                // METHOD 1: Capture all existing audio/video elements
                 const captureElement = (el) => {
                     try {
-                        if (el.srcObject) { audioContext.createMediaStreamSource(el.srcObject).connect(destination); sourcesConnected++; return; }
-                        if (el.captureStream) { audioContext.createMediaStreamSource(el.captureStream()).connect(destination); sourcesConnected++; return; }
-                        if (!el._capturedElement) { audioContext.createMediaElementSource(el).connect(destination); el._capturedElement = true; sourcesConnected++; }
-                    } catch (e) { }
+                        if (el.srcObject && el.srcObject.getAudioTracks().length > 0) {
+                            const source = audioContext.createMediaStreamSource(el.srcObject);
+                            source.connect(destination);
+                            sourcesConnected++;
+                            console.log('[Recording] Captured srcObject from', el.tagName);
+                            return;
+                        }
+                        if (el.captureStream) {
+                            const stream = el.captureStream();
+                            if (stream.getAudioTracks().length > 0) {
+                                const source = audioContext.createMediaStreamSource(stream);
+                                source.connect(destination);
+                                sourcesConnected++;
+                                console.log('[Recording] Captured captureStream from', el.tagName);
+                            }
+                            return;
+                        }
+                        if (!el._capturedElement) {
+                            const source = audioContext.createMediaElementSource(el);
+                            source.connect(destination);
+                            source.connect(audioContext.destination); // keep playing
+                            el._capturedElement = true;
+                            sourcesConnected++;
+                            console.log('[Recording] Captured MediaElementSource from', el.tagName);
+                        }
+                    } catch (e) {
+                        console.log('[Recording] Element capture failed:', e.message);
+                    }
                 };
 
                 document.querySelectorAll('audio, video').forEach(captureElement);
 
-                if (sourcesConnected === 0) {
-                    // Fallback to display media if no sources found
-                    window.onAudioDebug('No sources, trying display capture...');
+                // METHOD 2: Capture Web Audio nodes
+                if (window.__speakerNodes) {
+                    window.__speakerNodes.forEach(n => {
+                        try { n.connect(destination); sourcesConnected++; } catch (e) {}
+                    });
+                }
+                if (window.__audioNodes) {
+                    window.__audioNodes.forEach(i => {
+                        try {
+                            if (i.node && !i.node._captured) {
+                                i.node.connect(destination);
+                                i.node._captured = true;
+                                sourcesConnected++;
+                            }
+                        } catch (e) {}
+                    });
                 }
 
-                // Create 16kHz audio context for Deepgram
+                // METHOD 3: Observe DOM for new audio/video elements added later
+                const observer = new MutationObserver((mutations) => {
+                    mutations.forEach(m => {
+                        m.addedNodes.forEach(node => {
+                            if (node.tagName === 'AUDIO' || node.tagName === 'VIDEO') {
+                                setTimeout(() => captureElement(node), 500);
+                            }
+                            if (node.querySelectorAll) {
+                                node.querySelectorAll('audio, video').forEach(el => {
+                                    setTimeout(() => captureElement(el), 500);
+                                });
+                            }
+                        });
+                    });
+                });
+                observer.observe(document.body, { childList: true, subtree: true });
+
+                // METHOD 4: Poll for new elements every 2 seconds
+                const pollInterval = setInterval(() => {
+                    document.querySelectorAll('audio, video').forEach(el => {
+                        if (!el._capturedElement && !el._capturing) {
+                            el._capturing = true;
+                            captureElement(el);
+                        }
+                    });
+                    // Also re-check audio nodes
+                    if (window.__audioNodes) {
+                        window.__audioNodes.forEach(i => {
+                            try {
+                                if (i.node && !i.node._captured) {
+                                    i.node.connect(destination);
+                                    i.node._captured = true;
+                                    sourcesConnected++;
+                                    console.log('[Recording] Late audio node captured');
+                                }
+                            } catch (e) {}
+                        });
+                    }
+                }, 2000);
+
+                window.__cleanupRecording = () => {
+                    clearInterval(pollInterval);
+                    observer.disconnect();
+                };
+
+                window.onAudioDebug(`Connected ${sourcesConnected} sources initially`);
+
+                // Setup 16kHz PCM processor for Deepgram live
                 const sampleRate = 16000;
                 const liveContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate });
                 const liveSource = liveContext.createMediaStreamSource(destination.stream);
-
-                // Script processor for PCM encoding
                 const bufferSize = 4096;
                 const processor = liveContext.createScriptProcessor(bufferSize, 1, 1);
 
                 processor.onaudioprocess = (e) => {
                     const inputData = e.inputBuffer.getChannelData(0);
-
-                    // Convert Float32 to Int16 (PCM 16-bit)
                     const pcmData = new Int16Array(inputData.length);
                     for (let i = 0; i < inputData.length; i++) {
                         const s = Math.max(-1, Math.min(1, inputData[i]));
                         pcmData[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
                     }
-
-                    // Send PCM to Deepgram via Node backend
                     const buffer = new Uint8Array(pcmData.buffer);
                     const base64 = btoa(String.fromCharCode.apply(null, buffer));
                     window.sendPCMAudioToLive(base64);
                 };
 
-                // Connect: destination stream → processor → context destination
                 liveSource.connect(processor);
                 processor.connect(liveContext.destination);
 
-                console.log('[Live Transcription] ✅ PCM processor started (16kHz, 16-bit)');
-
-                // Also record WebM for post-meeting transcription
-                const recorder = new MediaRecorder(destination.stream, { mimeType: 'audio/webm;codecs=opus' });
-                recorder.ondataavailable = e => { if (e.data.size > 0) { const r = new FileReader(); r.onloadend = () => window.sendAudioChunk(r.result.split(',')[1]); r.readAsDataURL(e.data); } };
+                // Record WebM for post-meeting
+                const recorder = new MediaRecorder(destination.stream, {
+                    mimeType: 'audio/webm;codecs=opus'
+                });
+                recorder.ondataavailable = e => {
+                    if (e.data.size > 0) {
+                        const r = new FileReader();
+                        r.onloadend = () => window.sendAudioChunk(r.result.split(',')[1]);
+                        r.readAsDataURL(e.data);
+                    }
+                };
                 recorder.onerror = e => window.onAudioError(e.error?.message);
                 recorder.start(1000);
 
