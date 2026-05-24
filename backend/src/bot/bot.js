@@ -49,6 +49,20 @@ async function saveDebugScreenshot(page, meetingIdMongo, stage) {
 async function dismissZoomModals(page) {
     if (!page || page.isClosed()) return;
     try {
+        // First handle bot detection dialog - click Close NOT Sign in
+        await page.evaluate(() => {
+            const allButtons = Array.from(document.querySelectorAll('button'));
+            const closeBtn = allButtons.find(b => 
+                (b.textContent || '').trim().toLowerCase() === 'close'
+            );
+            if (closeBtn) {
+                closeBtn.click();
+                return true;
+            }
+        });
+        await new Promise(r => setTimeout(r, 500));
+
+        // Then handle other modals as before
         const frames = [page, ...page.frames()];
         for (const frame of frames) {
             try {
@@ -194,37 +208,46 @@ async function runBot(meetingLink, meetingIdMongo, userId = null, botName = 'AI 
     // Detect platform and get browser profile if needed
     const platform = detectPlatform(meetingLink);
     let browserOptions = {
-        headless: process.env.PUPPETEER_HEADLESS === 'true' ? true : (process.env.PUPPETEER_HEADLESS === 'false' ? false : false),
-        defaultViewport: null,
-        ignoreDefaultArgs: ['--enable-automation'],
+        headless: true,
+        defaultViewport: { width: 1280, height: 720 },
+        ignoreDefaultArgs: ['--enable-automation', '--enable-blink-features=AutomationControlled'],
         args: [
             '--no-sandbox',
             '--disable-setuid-sandbox',
             '--disable-blink-features=AutomationControlled',
+            '--disable-features=IsolateOrigins,site-per-process,WebRtcHideLocalIpsWithMdns',
+            '--disable-site-isolation-trials',
+            '--disable-web-security',
+            '--disable-infobars',
+            '--no-first-run',
+            '--no-default-browser-check',
+            '--disable-default-apps',
+            '--disable-extensions',
+            '--disable-component-extensions-with-background-pages',
+            '--disable-background-networking',
+            '--disable-sync',
+            '--metrics-recording-only',
+            '--disable-client-side-phishing-detection',
+            '--disable-hang-monitor',
+            '--disable-prompt-on-repost',
+            '--disable-domain-reliability',
+            '--no-service-autorun',
+            '--password-store=basic',
+            '--use-mock-keychain',
+            '--export-tagged-pdf',
+            '--window-size=1280,720',
+            '--start-maximized',
             '--autoplay-policy=no-user-gesture-required',
             '--use-fake-ui-for-media-stream',
-            '--start-maximized',
-            '--window-size=1280,720',
-            '--window-position=0,0',
-            '--disable-infobars',
-            '--disable-background-timer-throttling',
-            '--disable-backgrounding-occluded-windows',
-            '--disable-renderer-backgrounding',
             '--enable-usermedia-screen-capturing',
-            '--allow-http-screen-capture',
-            '--auto-select-desktop-capture-source=Zoom',
-            '--enable-features=GetDisplayMediaSet,GetDisplayMediaSetAutoSelectAllScreens,WebRtcExposeRtpPacketType',
-            // ADD THESE NEW FLAGS:
-            '--disable-web-security',
             '--allow-running-insecure-content',
-            '--disable-features=IsolateOrigins,site-per-process,WebRtcHideLocalIpsWithMdns',
-            '--enable-webrtc-hide-local-ips-with-mdns=false',
-            '--force-webrtc-ip-handling-policy=default_public_interface_only',
-            '--disable-rtc-smoothness-algorithm',
-            '--enable-blink-features=ShadowDOMV0,CustomElementsV0,HTMLImports',
+            '--disable-gpu',
             `--display=:99`,
+            // Audio recording loopback/capture flags:
             '--alsa-output-device=pulse',
             '--alsa-input-device=pulse',
+            '--auto-select-desktop-capture-source=Zoom',
+            '--enable-features=GetDisplayMediaSet,GetDisplayMediaSetAutoSelectAllScreens,WebRtcExposeRtpPacketType',
         ],
     };
 
@@ -274,23 +297,82 @@ async function runBot(meetingLink, meetingIdMongo, userId = null, botName = 'AI 
     const page = pages[0] || await browser.newPage();
 
     // Set a normal browser User-Agent
-    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36');
 
     // Inject stealth overrides before any document loads to bypass bot detection (such as Zoom's webdriver detection)
     await page.evaluateOnNewDocument(() => {
-        Object.defineProperty(navigator, 'webdriver', {
-            get: () => false,
-        });
+        // Override webdriver
+        Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
         
-        // Mock plugins to look like a real browser
+        // Override plugins to look real
         Object.defineProperty(navigator, 'plugins', {
-            get: () => [1, 2, 3, 4, 5],
+            get: () => {
+                const plugins = [
+                    { name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
+                    { name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai', description: '' },
+                    { name: 'Native Client', filename: 'internal-nacl-plugin', description: '' },
+                ];
+                plugins.refresh = () => {};
+                plugins.item = (i) => plugins[i];
+                plugins.namedItem = (n) => plugins.find(p => p.name === n);
+                Object.setPrototypeOf(plugins, PluginArray.prototype);
+                return plugins;
+            }
         });
-        
-        // Mock languages
-        Object.defineProperty(navigator, 'languages', {
-            get: () => ['en-US', 'en'],
-        });
+
+        // Override languages
+        Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
+
+        // Override platform
+        Object.defineProperty(navigator, 'platform', { get: () => 'Win32' });
+
+        // Override hardwareConcurrency
+        Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 8 });
+
+        // Override deviceMemory
+        Object.defineProperty(navigator, 'deviceMemory', { get: () => 8 });
+
+        // Override permissions
+        const originalQuery = window.navigator.permissions.query;
+        window.navigator.permissions.query = (parameters) => (
+            parameters.name === 'notifications' ?
+                Promise.resolve({ state: Notification.permission }) :
+                originalQuery(parameters)
+        );
+
+        // Remove automation indicators
+        delete window.cdc_adoQpoasnfa76pfcZLmcfl_Array;
+        delete window.cdc_adoQpoasnfa76pfcZLmcfl_Promise;
+        delete window.cdc_adoQpoasnfa76pfcZLmcfl_Symbol;
+
+        // Override chrome runtime
+        window.chrome = {
+            runtime: {
+                connect: () => {},
+                sendMessage: () => {},
+                onMessage: { addListener: () => {} },
+                id: 'nkbihfbeogaeaoehlefnkodbefgpgknn',
+            },
+            loadTimes: () => ({}),
+            csi: () => ({}),
+        };
+
+        // Spoof screen dimensions
+        Object.defineProperty(screen, 'width', { get: () => 1920 });
+        Object.defineProperty(screen, 'height', { get: () => 1080 });
+        Object.defineProperty(screen, 'availWidth', { get: () => 1920 });
+        Object.defineProperty(screen, 'availHeight', { get: () => 1040 });
+        Object.defineProperty(screen, 'colorDepth', { get: () => 24 });
+        Object.defineProperty(screen, 'pixelDepth', { get: () => 24 });
+
+        // Spoof timezone
+        const originalDateTimeFormat = Intl.DateTimeFormat;
+        Intl.DateTimeFormat = function(...args) {
+            if (!args[1]) args[1] = {};
+            args[1].timeZone = args[1].timeZone || 'America/New_York';
+            return new originalDateTimeFormat(...args);
+        };
+        Intl.DateTimeFormat.prototype = originalDateTimeFormat.prototype;
     });
 
     // Bring browser window to front
