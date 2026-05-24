@@ -43,10 +43,17 @@ const chatController = require('./controllers/chatController');
 const app = express();
 const server = http.createServer(app);
 
+// Configure dynamic frontend URL and allowed origins for CORS
+const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+const allowedOrigins = ["http://localhost:5173", "http://localhost:5174", "http://localhost:3000"];
+if (process.env.FRONTEND_URL && !allowedOrigins.includes(process.env.FRONTEND_URL)) {
+    allowedOrigins.push(process.env.FRONTEND_URL);
+}
+
 // Socket.IO for real-time updates
 const io = new Server(server, {
     cors: {
-        origin: ["http://localhost:5173", "http://localhost:5174", "http://localhost:3000"],
+        origin: allowedOrigins,
         methods: ["GET", "POST"]
     }
 });
@@ -55,7 +62,7 @@ const io = new Server(server, {
 global.io = io;
 
 app.use(cors({
-    origin: ["http://localhost:5173", "http://localhost:5174", "http://localhost:3000"],
+    origin: allowedOrigins,
     credentials: true
 }));
 app.use(express.json());
@@ -166,17 +173,17 @@ app.get('/api/auth/google/callback', (req, res, next) => {
         if (err) {
             console.error('[Auth] Google OAuth error:', err.message);
             console.error('[Auth] OAuth error details:', err.oauthError || err);
-            return res.redirect(`http://localhost:5173?error=${encodeURIComponent(err.message)}`);
+            return res.redirect(`${frontendUrl}?error=${encodeURIComponent(err.message)}`);
         }
         if (!user) {
             console.error('[Auth] Google OAuth - no user returned:', info);
-            return res.redirect('http://localhost:5173?error=auth_failed');
+            return res.redirect(`${frontendUrl}?error=auth_failed`);
         }
 
         req.logIn(user, (loginErr) => {
             if (loginErr) {
                 console.error('[Auth] Login error:', loginErr);
-                return res.redirect(`http://localhost:5173?error=${encodeURIComponent(loginErr.message)}`);
+                return res.redirect(`${frontendUrl}?error=${encodeURIComponent(loginErr.message)}`);
             }
 
             // Generate JWT token
@@ -191,7 +198,7 @@ app.get('/api/auth/google/callback', (req, res, next) => {
             });
 
             // Redirect to frontend with token in URL (for localStorage)
-            res.redirect(`http://localhost:5173?token=${token}`);
+            res.redirect(`${frontendUrl}?token=${token}`);
         });
     })(req, res, next);
 });
