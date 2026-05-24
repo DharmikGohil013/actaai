@@ -25,6 +25,71 @@ function decryptPassword(encryptedData) {
     return decrypted;
 }
 
+// Debug screenshot helper - saves to backend/recordings and prints the public HTTP URL
+async function saveDebugScreenshot(page, meetingIdMongo, stage) {
+    if (!page || page.isClosed()) return;
+    try {
+        const recordingsDir = path.join(__dirname, '../../recordings');
+        if (!fs.existsSync(recordingsDir)) {
+            fs.mkdirSync(recordingsDir, { recursive: true });
+        }
+        const filename = `screenshot-${meetingIdMongo}-${stage}-${Date.now()}.png`;
+        const screenshotPath = path.join(recordingsDir, filename);
+        await page.screenshot({ path: screenshotPath });
+        
+        const backendUrl = process.env.BACKEND_URL || 'http://45.77.168.91:3001';
+        console.log(`[Bot] 📸 Stage [${stage}] screenshot saved! View here: ${backendUrl}/recordings/${filename}`);
+    } catch (err) {
+        console.log(`[Bot] Warning: Failed to take screenshot [${stage}]:`, err.message);
+    }
+}
+
+// Modal and Terms auto-acceptance helper - searches all contexts and frames for consent clickables
+async function dismissZoomModals(page) {
+    if (!page || page.isClosed()) return;
+    try {
+        const frames = [page, ...page.frames()];
+        for (const frame of frames) {
+            try {
+                // Find all potential clickables on the page/frame
+                const clickables = await frame.$$('button, [role="button"], a.btn, .btn, #onetrust-accept-btn-handler');
+                for (const el of clickables) {
+                    const text = await frame.evaluate(node => node.textContent || '', el);
+                    const ariaLabel = await frame.evaluate(node => node.getAttribute('aria-label') || '', el);
+                    const id = await frame.evaluate(node => node.id || '', el);
+                    
+                    const combined = (text + ' ' + ariaLabel + ' ' + id).toLowerCase().trim();
+                    
+                    // Terms of service, cookie policies, AI Companion notices, recording got-its
+                    const matchWords = [
+                        'agree', 'accept', 'continue', 'confirm', 
+                        'i agree', 'i accept', 'got it', 'okay', 'ok',
+                        'close', 'proceed', 'dismiss'
+                    ];
+                    
+                    if (matchWords.some(word => combined === word || combined.includes(word))) {
+                        // Validate element visibility and dimensions to avoid clicking hidden overlays
+                        const isVisible = await frame.evaluate(node => {
+                            const rect = node.getBoundingClientRect();
+                            return rect.width > 0 && rect.height > 0 && window.getComputedStyle(node).display !== 'none';
+                        }, el);
+                        
+                        if (isVisible) {
+                            console.log(`[Bot] 👆 Auto-clicking dialog element: text="${text.trim()}", ariaLabel="${ariaLabel}", id="${id}"`);
+                            await el.click();
+                            await delay(1000);
+                        }
+                    }
+                }
+            } catch (frameErr) {
+                // Ignore detached/frame context errors
+            }
+        }
+    } catch (err) {
+        console.log('[Bot] Warning inside dismissZoomModals:', err.message);
+    }
+}
+
 // Detect platform from meeting link
 function detectPlatform(link) {
     if (link.includes('zoom.us')) return 'zoom';
@@ -446,6 +511,8 @@ async function runBot(meetingLink, meetingIdMongo, userId = null, botName = 'AI 
             }
 
             console.log('[Bot] ✅ Meeting link appears valid, proceeding...');
+            await saveDebugScreenshot(page, meetingIdMongo, 'loaded');
+            await dismissZoomModals(page);
         } catch (e) {
             console.log('[Bot] Navigation timeout, continuing...');
         }
@@ -477,6 +544,7 @@ async function runBot(meetingLink, meetingIdMongo, userId = null, botName = 'AI 
             }
 
             await delay(1000);
+            await saveDebugScreenshot(page, meetingIdMongo, 'name-entered');
 
             // Join button
             console.log('[Bot] Looking for join button...');
@@ -528,9 +596,19 @@ async function runBot(meetingLink, meetingIdMongo, userId = null, botName = 'AI 
                 if (btn) btn.click();
             });
 
+            await delay(3000);
+            await saveDebugScreenshot(page, meetingIdMongo, 'join-clicked');
+            await dismissZoomModals(page);
+
             console.log('[Bot] Waiting to enter meeting...');
             emitStatus(meetingIdMongo, 'waiting', { message: 'Waiting to enter...' });
-            await delay(15000);
+            
+            // Loop for 15 seconds, dismissing consent dialogs & taking screenshots every 3s
+            for (let i = 1; i <= 5; i++) {
+                await delay(3000);
+                await dismissZoomModals(page);
+                await saveDebugScreenshot(page, meetingIdMongo, `waiting-step-${i}`);
+            }
 
             // Join audio
             console.log('[Bot] Joining audio...');
@@ -604,6 +682,11 @@ async function runBot(meetingLink, meetingIdMongo, userId = null, botName = 'AI 
             console.error('[Bot] Error:', err.message);
             console.error('[Bot] Stack trace:', err.stack);
             emitStatus(meetingIdMongo, 'failed', { message: `Error: ${err.message}` });
+
+            // Capture failure screenshot
+            if (page && !page.isClosed()) {
+                await saveDebugScreenshot(page, meetingIdMongo, 'failed');
+            }
 
             // Clean up on error
             try {
