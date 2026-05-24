@@ -10,6 +10,11 @@ import axios from 'axios';
 
 const API_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:3000';
 
+const isLocal = window.location.hostname === 'localhost' || 
+                window.location.hostname === '127.0.0.1' || 
+                API_URL.includes('localhost') || 
+                API_URL.includes('127.0.0.1');
+
 const Settings = () => {
     const navigate = useNavigate();
     const [loading, setLoading] = useState(true);
@@ -587,6 +592,12 @@ const Settings = () => {
                                     If you want the bot to join restricted or internal enterprise meetings, you can log in to a custom Google account. 
                                     Note: Custom account authentication is only supported in local development.
                                 </p>
+
+                                {!isLocal && (
+                                    <div className="p-3 mb-4 bg-amber-500/10 border border-amber-500/20 rounded-lg text-[11px] text-amber-300 leading-relaxed">
+                                        ⚠️ Custom account connection is disabled in production/cloud environments. Google Meet guest joining is enabled and supported automatically!
+                                    </div>
+                                )}
                                 
                                 {botConfigured ? (
                                     <div className="space-y-3">
@@ -604,8 +615,12 @@ const Settings = () => {
                                 ) : (
                                     <button
                                         onClick={handleBotSetup}
-                                        disabled={botLoading}
-                                        className="w-full py-2.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs transition-colors font-medium flex items-center justify-center gap-2"
+                                        disabled={botLoading || !isLocal}
+                                        className={`w-full py-2.5 rounded-lg text-xs transition-colors font-medium flex items-center justify-center gap-2 ${
+                                            !isLocal 
+                                            ? 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700/50' 
+                                            : 'bg-blue-600 hover:bg-blue-700 text-white'
+                                        }`}
                                     >
                                         {botLoading ? <Loader2 className="animate-spin" size={14} /> : <ExternalLink size={14} />}
                                         Connect Custom Account (Local Dev only)

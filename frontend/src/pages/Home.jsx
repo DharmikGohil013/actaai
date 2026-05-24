@@ -8,6 +8,11 @@ import { ZoomLogo, TeamsLogo, MeetLogo } from '../components/Logos';
 
 const API_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:3000';
 
+const isLocal = window.location.hostname === 'localhost' || 
+                window.location.hostname === '127.0.0.1' || 
+                API_URL.includes('localhost') || 
+                API_URL.includes('127.0.0.1');
+
 // Animated Text Component with letter-by-letter reveal
 const AnimatedText = ({ text, isVisible }) => {
     const words = text.split(' ');
@@ -235,10 +240,6 @@ const Home = () => {
     const handleJoin = async () => {
         if (!link) {
             setStatus({ type: 'error', message: 'Please enter a meeting link' });
-            return;
-        }
-        if (link.includes('meet.google.com') && !botConfigured) {
-            setStatus({ type: 'error', message: 'Please setup bot credentials for Google Meet first' });
             return;
         }
         setLoading(true);
@@ -518,8 +519,8 @@ const Home = () => {
                         )}
                     </AnimatePresence>
 
-                    {/* Bot Setup Warning for Google Meet */}
-                    {!botConfigured && (
+                    {/* Bot Setup Warning for Google Meet (Only in Local Dev since guest joining is automatic on cloud) */}
+                    {!botConfigured && isLocal && (
                         <motion.div
                             initial={{ opacity: 0, y: 10 }}
                             animate={{ opacity: 1, y: 0 }}
@@ -531,10 +532,9 @@ const Home = () => {
                                     <div className="flex items-start gap-3 mb-4">
                                         <AlertCircle size={20} className="text-yellow-400 mt-0.5 flex-shrink-0" />
                                         <div>
-                                            <h3 className="text-white font-semibold mb-1">Google Meet Setup Required</h3>
+                                            <h3 className="text-white font-semibold mb-1">Google Meet Custom Account (Optional)</h3>
                                             <p className="text-sm text-slate-400">
-                                                To join Google Meet meetings, you need to authenticate your Google account.
-                                                A browser will open for you to log in.
+                                                For restricted or internal enterprise Google Meet meetings, you can log in to a custom Google account. Otherwise, the bot will join as a guest automatically!
                                             </p>
                                         </div>
                                     </div>
@@ -550,7 +550,7 @@ const Home = () => {
                                             </>
                                         ) : (
                                             <>
-                                                <span>Setup Google Account</span>
+                                                <span>Setup Custom Google Account</span>
                                                 <ArrowRight size={16} />
                                             </>
                                         )}
@@ -559,9 +559,9 @@ const Home = () => {
                             </div>
                         </motion.div>
                     )}
-
-                    {/* Bot Configured - Show Re-auth Option */}
-                    {botConfigured && localStorage.getItem('authToken') && (
+ 
+                    {/* Bot Configured - Show Re-auth Option (Only in Local Dev) */}
+                    {botConfigured && localStorage.getItem('authToken') && isLocal && (
                         <motion.div
                             initial={{ opacity: 0 }}
                             animate={{ opacity: 1 }}
