@@ -640,22 +640,66 @@ async function runBot(meetingLink, meetingIdMongo, userId = null, botName = 'AI 
             await dismissZoomModals(page);
 
             console.log('[Bot] Waiting to enter meeting...');
-            emitStatus(meetingIdMongo, 'waiting', { message: 'Waiting to enter...' });
+            emitStatus(meetingIdMongo, 'waiting', { message: 'Waiting for host to admit bot (waiting room)...' });
             
-            // Loop for 15 seconds, dismissing consent dialogs & taking screenshots every 3s
-            for (let i = 1; i <= 5; i++) {
-                await delay(3000);
+            let inMeeting = false;
+            const maxWaitTimeMs = 5 * 60 * 1000; // 5 minutes max wait
+            const checkIntervalMs = 5000; // Check every 5 seconds
+            const startTime = Date.now();
+            let step = 0;
+            
+            while (Date.now() - startTime < maxWaitTimeMs) {
+                step++;
+                await delay(checkIntervalMs);
+                
+                // Check if page closed or detached
+                if (page.isClosed()) break;
+                
+                // Dismiss any terms, consent or recording dialogs (now ignores close/dismiss buttons)
                 await dismissZoomModals(page);
-                await saveDebugScreenshot(page, meetingIdMongo, `waiting-step-${i}`);
+                
+                // Take debug screenshots occasionally
+                if (step % 3 === 1) {
+                    await saveDebugScreenshot(page, meetingIdMongo, `waiting-step-${step}`);
+                }
+                
+                // Check if we have entered the meeting room
+                inMeeting = await isInMeetingRoom(page);
+                if (inMeeting) {
+                    console.log('[Bot] 🎉 Entered meeting room!');
+                    await saveDebugScreenshot(page, meetingIdMongo, 'entered-meeting-room');
+                    break;
+                }
+                
+                // Update status for user with elapsed time
+                const elapsedSecs = Math.round((Date.now() - startTime) / 1000);
+                emitStatus(meetingIdMongo, 'waiting', { 
+                    message: `Waiting for host to admit bot (elapsed: ${elapsedSecs}s)...` 
+                });
+            }
+            
+            if (!inMeeting) {
+                console.log('[Bot] ⚠️ Did not detect entering meeting room within timeout. Proceeding anyway...');
             }
 
             // Join audio
             console.log('[Bot] Joining audio...');
             try {
+                await delay(2000); // Give dialog an extra moment to settle
                 const audioJoined = await page.evaluate(() => {
-                    const btn = [...document.querySelectorAll('button')].find(b => {
+                    const buttons = Array.from(document.querySelectorAll('button, div[role="button"]'));
+                    const btn = buttons.find(b => {
                         const t = (b.textContent || '').toLowerCase();
-                        return t.includes('computer audio') || t.includes('join audio');
+                        const id = (b.id || '').toLowerCase();
+                        const cls = (b.className || '').toLowerCase();
+                        const aria = (b.getAttribute('aria-label') || '').toLowerCase();
+                        
+                        return t.includes('computer audio') || 
+                               t.includes('join audio') || 
+                               t.includes('join by computer') ||
+                               id.includes('computer-audio') ||
+                               cls.includes('computer-audio') ||
+                               aria.includes('computer audio');
                     });
                     if (btn) {
                         btn.click();
@@ -665,9 +709,9 @@ async function runBot(meetingLink, meetingIdMongo, userId = null, botName = 'AI 
                 });
 
                 if (audioJoined) {
-                    console.log('[Bot] Audio join button clicked');
+                    console.log('[Bot] Audio join button clicked successfully');
                 } else {
-                    console.log('[Bot] Audio join button not found, may already be in meeting');
+                    console.log('[Bot] Audio join button not found, may already be in meeting or using auto-join');
                 }
             } catch (e) {
                 console.log('[Bot] Error joining audio:', e.message);
