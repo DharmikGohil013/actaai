@@ -61,6 +61,5 @@ const CompanySchema = new mongoose.Schema({
 CompanySchema.index({ createdBy: 1 });
 CompanySchema.index({ 'employees.email': 1 });
 CompanySchema.index({ visibility: 1 });
-CompanySchema.index({ inviteCode: 1 });
 
 module.exports = mongoose.model('Company', CompanySchema);

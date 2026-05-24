@@ -53,6 +53,5 @@ const ClassroomSchema = new mongoose.Schema({
 ClassroomSchema.index({ teacherId: 1 });
 ClassroomSchema.index({ 'students.email': 1 });
 ClassroomSchema.index({ visibility: 1 });
-ClassroomSchema.index({ inviteCode: 1 });
 
 module.exports = mongoose.model('Classroom', ClassroomSchema);

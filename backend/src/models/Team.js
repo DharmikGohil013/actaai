@@ -61,6 +61,5 @@ const TeamSchema = new mongoose.Schema({
 TeamSchema.index({ createdBy: 1 });
 TeamSchema.index({ 'members.email': 1 });
 TeamSchema.index({ visibility: 1 });
-TeamSchema.index({ inviteCode: 1 });
 
 module.exports = mongoose.model('Team', TeamSchema);
